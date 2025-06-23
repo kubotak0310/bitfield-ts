@@ -6,7 +6,6 @@ type BitDefinition<Name extends string> = {
 
 type BitDefinitions = readonly BitDefinition<string>[];
 
-// 簡潔な型定義に変更
 type BitFieldBits<T extends BitDefinitions> = {
   [K in T[number] as K['name']]: number;
 };
@@ -15,7 +14,7 @@ class BitField<T extends BitDefinitions> {
   private _value: number;
   public bits: BitFieldBits<T>;
 
-  constructor(value: number, bitDefs: T, isReadOnly: boolean = true) {
+  constructor(value: number, bitDefs: T) {
     this._value = value & 0xffffffff;
     const bitsObj = {} as BitFieldBits<T>;
 
@@ -25,24 +24,17 @@ class BitField<T extends BitDefinitions> {
       }
 
       const bitLength = def.msb - def.lsb + 1;
-      // 32ビットマスクの明示的対応
       const mask = bitLength === 32 ? 0xffffffff : ((1 << bitLength) - 1) << def.lsb;
 
-      const descriptor: PropertyDescriptor = {
+      Object.defineProperty(bitsObj, def.name, {
         enumerable: true,
         get: () => (this._value & mask) >>> def.lsb,
-      };
-
-      if (!isReadOnly) {
-        descriptor.set = (newValue: number) => {
+        set: (newValue: number) => {
           const valueMask = (1 << bitLength) - 1;
           const maskedValue = (newValue & valueMask) << def.lsb;
-          // 更新時に32ビット範囲を明示的にマスク
           this._value = ((this._value & ~mask) | maskedValue) & 0xffffffff;
-        };
-      }
-
-      Object.defineProperty(bitsObj, def.name, descriptor);
+        },
+      });
     }
 
     this.bits = bitsObj;
@@ -53,15 +45,58 @@ class BitField<T extends BitDefinitions> {
   }
 }
 
-// --- 使用例 ---
-const bitDef = [{ name: 'hoge1', msb: 31, lsb: 0 }] as const;
+class TableBitDef<T extends readonly (readonly BitDefinition<string>[])[]> {
+  public readonly words: {
+    [I in keyof T]: BitField<T[I]>;
+  };
 
-// 読み取り専用
-const readOnlyField = new BitField(0x23, bitDef);
-console.log(readOnlyField.bits.hoge1); // 35 (0x23)
+  constructor(data: number[], bitDefs: T) {
+    if (data.length !== bitDefs.length) {
+      throw new Error('Data and bitDefs must have the same length');
+    }
+    this.words = data.map((value, index) => new BitField(value, bitDefs[index])) as {
+      [I in keyof T]: BitField<T[I]>;
+    };
+  }
+}
 
-// 書き込み可能
-const writeField = new BitField(0x21, bitDef, false);
-writeField.bits.hoge1 = 0xa; // フィールド名を修正
-console.log(writeField.bits.hoge1); // 10
-console.log(writeField.word.toString(16)); // 'a' (0xA)
+// 使用例
+const bitDefs = [
+  [
+    { name: 'hoge01', msb: 1, lsb: 0 },
+    { name: 'hoge02', msb: 4, lsb: 4 },
+  ],
+  [
+    { name: 'hoge11', msb: 3, lsb: 0 },
+    { name: 'hoge12', msb: 8, lsb: 6 },
+  ],
+  [{ name: 'hoge21', msb: 31, lsb: 0 }],
+  [
+    { name: 'hoge31', msb: 1, lsb: 0 },
+    { name: 'hoge32', msb: 3, lsb: 2 },
+    { name: 'hoge33', msb: 9, lsb: 8 },
+    { name: 'hoge34', msb: 15, lsb: 10 },
+  ],
+] as const;
+
+const data = [0x00000012, 0x000001c7, 0x10000001, 0x00000f3c];
+
+const tbl = new TableBitDef(data, bitDefs);
+
+// ワード値確認
+for (let i = 0; i < bitDefs.length; i++) {
+  console.log(tbl.words[i].word.toString(16).padStart(8, '0'));
+}
+
+// 読み取り
+console.log(tbl.words[0].bits.hoge01);
+console.log(tbl.words[0].bits.hoge02);
+
+// 書き込み
+tbl.words[0].bits.hoge01 = 3;
+console.log(tbl.words[0].bits.hoge01); // 3
+
+// ワード値確認
+for (let i = 0; i < bitDefs.length; i++) {
+  console.log(tbl.words[i].word.toString(16).padStart(8, '0'));
+}
