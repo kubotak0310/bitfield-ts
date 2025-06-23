@@ -46,6 +46,8 @@ class BitField<T extends BitDefinitions> {
 }
 
 class TableBitDef<T extends readonly (readonly BitDefinition<string>[])[]> {
+  // wordsはBitFieldを要素とした配列(BitField[])だが、Map型として定義していることがミソ
+  //keyof Tは 0|1|2.. のインデックス型。インデックス毎に異なる型を付けたいのでマップ型(オブジェクト型)としている.
   public readonly words: {
     [I in keyof T]: BitField<T[I]>;
   };
